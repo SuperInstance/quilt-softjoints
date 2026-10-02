@@ -9,8 +9,12 @@
 //   typesafe-systemone — the fleet's primary (canonical client shape, receipted)
 //   deepinfra-chat     — OpenAI-compatible cheap racing horses (granite-4.2-3b etc.)
 //   local              — deterministic stub for tests/smoke (no network)
+//
+// v2 fact gate: factRequired joints (policy/outcome regions) refuse to rule on
+// fact-starved moments — E_FACTS_REQUIRED, routed by the caller, never guessed.
 
 import { createHash } from 'node:crypto';
+import { factsClass, missingRequiredFacts, momentFacts, E_FACTS_REQUIRED } from './facts.js';
 
 const CACHE = new Map(); // key: type|model|bucketed-vector → {answer, vector, confidence}
 export function clearCache() { CACHE.clear(); }
@@ -125,10 +129,35 @@ export function bucketVector(vector, buckets = 3) {
 }
 
 // runJoint(sheet, jointId, moment, opts) — the executor.
-// Order: cache → backend → fallback. Every path emits a trace the caller receipts.
+// Order: FACT GATE (v2, factRequired joints only) → cache → backend → fallback.
+// Every path emits a trace the caller receipts.
+//
+// v2 (wave-68): a joint declaring factRequired:true is a POLICY/OUTCOME region.
+// A ruling on missing/empty facts, or facts that do not cover requiredFacts,
+// is refused with the named error E_FACTS_REQUIRED BEFORE any backend call —
+// never guessed (facts decide outcomes; emotion decides tone; see
+// docs/fact-tone-v2.md). The caller routes the refusal (routeFactRefusal).
 export async function runJoint(sheet, jointId, moment, opts = {}) {
   const joint = sheet.cells.find(c => c.id === jointId);
   if (!joint || joint.kind !== 'softjoint') throw new Error(`runJoint: ${jointId} is not a softjoint cell`);
+  // ---- FACT GATE (v2) -------------------------------------------------------
+  if (joint.factRequired) {
+    const { facts, starved } = momentFacts(moment);
+    const missing = missingRequiredFacts(joint.requiredFacts, facts);
+    if (starved || missing.length > 0) {
+      return {
+        answer: null,
+        vector: moment?.vector || null,
+        confidence: 0,
+        source: 'fact-refused',
+        error: E_FACTS_REQUIRED,
+        missingFacts: starved && (joint.requiredFacts || []).length ? [...(joint.requiredFacts || [])] : missing,
+        reason: starved
+          ? `fact-starved moment: no facts extracted; a ruling here would be a guess (required: ${(joint.requiredFacts || []).join(', ') || 'none declared'})`
+          : `required fact(s) not grounded by extraction: ${missing.join(', ')}`,
+      };
+    }
+  }
   const backend = opts.backend || makeBackend(joint.backend, opts);
   const labels = joint.vector.labels || [];
   // CACHE LAW (bug fixed live in lane 66-e): a moment WITH a vector caches by its
@@ -136,9 +165,13 @@ export async function runJoint(sheet, jointId, moment, opts = {}) {
   // A moment WITHOUT a vector caches by its exact state hash — never collapse two
   // different messages into one slot (the greeter's greeting once leaked into the
   // refunder's answer because unvectorized moments all bucketed to the same key).
+  // v2: facts are part of the cache identity. A with-receipt moment must never
+  // be served the cached ruling of a fact-starved moment in the same emotional
+  // bucket — that would be the cache-collapse leak (66-e) wearing a fact hat.
+  const fClass = Array.isArray(moment?.facts) && moment.facts.length ? `|${factsClass(moment.facts)}` : '';
   const cacheKey = moment.vector
-    ? `${backend.type}|${backend.model}|${bucketVector(moment.vector)}`
-    : `${backend.type}|${backend.model}|raw:${rawHash(moment.state ?? moment)}`;
+    ? `${backend.type}|${backend.model}|${bucketVector(moment.vector)}${fClass}`
+    : `${backend.type}|${backend.model}|raw:${rawHash(moment.state ?? moment)}${fClass}`;
   const budget = opts.budget ?? Infinity;
 
   if (CACHE.has(cacheKey) && opts.cache !== false) {
@@ -177,4 +210,26 @@ function fallbackPath(joint, moment, reason) {
     source: 'fallback',
     reason,
   };
+}
+
+// routeFactRefusal(sheet, jointId) — where a fact-refused moment goes (v2).
+// Order of authority: the joint's own `fact_fallback` cell (e.g. an ask-back
+// lookup), else the sheet's GREETER cell (hand the moment to the human
+// connection surface — the greeter law intact), else the joint's declared
+// fallback ref, else null (caller fail-closes). The refusal is a ROUTE, never
+// a swallowed error; the caller receipts `fact_refused: true` in the trace.
+export function routeFactRefusal(sheet, jointId) {
+  const joint = sheet.cells.find(c => c.id === jointId);
+  if (!joint || joint.kind !== 'softjoint') return null;
+  if (joint.fact_fallback) {
+    const cell = sheet.cells.find(c => c.id === joint.fact_fallback);
+    if (cell) return { route: cell.id, via: 'fact_fallback' };
+  }
+  const greeter = sheet.cells.find(c => c.kind === 'softjoint' && c.greeter === true);
+  if (greeter) return { route: greeter.id, via: 'greeter' };
+  if (joint.fallback?.ref) {
+    const cell = sheet.cells.find(c => c.id === joint.fallback.ref);
+    if (cell) return { route: cell.id, via: 'fallback' };
+  }
+  return null;
 }

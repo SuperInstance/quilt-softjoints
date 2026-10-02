@@ -18,10 +18,19 @@
 //   fact-starved moments (E_FACTS_REQUIRED, routed — never guessed);
 //   the region classifier marks fact-starved moments; freezingTest gains
 //   requireFacts (a frozen outcome row must be keyed on facts).
+// GREETER-LAW (wave-72) — the wrong-joint tell as a joint-SELECTION rule
+//   (docs/greeter-law.md): a region is GREETER-TERRITORY when (a) no policy
+//   outcome depends on it (outcomes bind to FACTS) AND (b) blind-judge lift of
+//   model-over-table ≤ 0 (greeterLiftTest + greeterTerritoryVerdict);
+//   decompose() tags such cells (liftReports evidence), runJoint routes them
+//   GREETER-FIRST (model only if the table misses — or the ask-back path), and
+//   freezingTest exempts them (they never freeze — a relationship joint, not a
+//   lookup).
 export { decompose, freezingTest, classifyRegion } from './decompose.js';
 export { runJoint, makeBackend, bucketVector, routeFactRefusal } from './joint.js';
 export { compileAdjustments } from './compiler.js';
 export { loadSheet, saveSheet, appendReceipt, readReceipts } from './store.js';
+export { greeterLiftTest, greeterTerritoryVerdict } from './greeter.js';
 export {
   E_FACTS_REQUIRED, isValidFact, validateFacts, factsClass,
   missingRequiredFacts, momentFacts, makeModelFactExtractor,

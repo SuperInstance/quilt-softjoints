@@ -128,8 +128,56 @@ export function bucketVector(vector, buckets = 3) {
     .sort().join('|');
 }
 
+// GREETER-FIRST (wave-72, the greeter law — docs/greeter-law.md): a cell tagged
+// greeterTerritory routes GREETER-FIRST. Its authored greeter table (greeter_route
+// → a lookup cell in this sheet; keymap matched on the message, like inferKey)
+// is consulted BEFORE the model seat — the blind judge ranked the table
+// at-or-above the model on this region (lift ≤ 0, the measured tell), so the
+// table is first among equals. On a table MISS:
+//   · greeter_miss: 'ask-back' — the miss lands on the ask-back cell (ask_back),
+//     the human-connection channel; the model seat is NEVER spent on this region
+//     (the storefront's strength: warmth is authored or asked-back, never bought).
+//   · default — the demoted model seat runs ("model only if the table misses"),
+//     still ahead of the fail-closed fallback.
+// Both zero-spend paths return before the cache/model machinery; a null ask-back
+// answer fails closed toward silence (the greeter no-script law), never a script.
+function serveGreeterFirst(sheet, joint, moment) {
+  const cell = sheet.cells.find(c => c.id === joint.greeter_route);
+  const state = moment?.state;
+  const message = String(typeof state === 'string' ? state : state?.message ?? '').toLowerCase();
+  let value = null;
+  if (cell && cell.kind === 'lookup') {
+    let key = null;
+    for (const [kw, k] of Object.entries(cell.keymap || {})) {
+      if (message.includes(kw)) { key = k; break; }
+    }
+    if (key !== null && Object.prototype.hasOwnProperty.call(cell.table || {}, key)) value = cell.table[key] ?? null;
+    else value = cell.default ?? null;
+  }
+  if (value !== null && value !== '') {
+    return {
+      answer: value, vector: moment?.vector || null, confidence: 0.9,
+      source: 'greeter-table', greeter_first: true, greeter_route: joint.greeter_route,
+      usage: null, latency_ms: 0, model: null,
+    };
+  }
+  if (joint.greeter_miss === 'ask-back' && joint.ask_back) {
+    const ab = sheet.cells.find(c => c.id === joint.ask_back);
+    const v = ab && ab.kind === 'lookup' ? (ab.table?.default ?? ab.default ?? null) : null;
+    return {
+      answer: v, vector: moment?.vector || null, confidence: v !== null ? 0.5 : 0,
+      source: 'ask-back', greeter_first: true, greeter_route: joint.greeter_route,
+      routed_to: joint.ask_back, routed_via: 'greeter-ask-back',
+      usage: null, latency_ms: 0, model: null,
+      ...(v === null ? { reason: 'ask-back missing/empty — fail-closed silence (the greeter no-script law), never a script' } : {}),
+    };
+  }
+  return null; // miss with the default strength → the demoted model seat (below)
+}
+
 // runJoint(sheet, jointId, moment, opts) — the executor.
-// Order: FACT GATE (v2, factRequired joints only) → cache → backend → fallback.
+// Order: FACT GATE (v2, factRequired joints only) → GREETER-FIRST (wave-72,
+// greeterTerritory joints only) → cache → backend → fallback.
 // Every path emits a trace the caller receipts.
 //
 // v2 (wave-68): a joint declaring factRequired:true is a POLICY/OUTCOME region.
@@ -160,6 +208,16 @@ export async function runJoint(sheet, jointId, moment, opts = {}) {
   }
   const backend = opts.backend || makeBackend(joint.backend, opts);
   const labels = joint.vector.labels || [];
+  // ---- GREETER-FIRST (wave-72) ----------------------------------------------
+  // Tagged cells consult their authored greeter table before the model seat;
+  // with the ask-back strength a miss lands on the ask-back cell and the model
+  // seat is never spent on greeter territory. (Placed AFTER the fact gate: a
+  // misconfigured factRequired+greeterTerritory cell still refuses first —
+  // fail-closed wins ties. Greeter-territory cells are outcome-free by law.)
+  if (joint.greeterTerritory === true && joint.greeter_route) {
+    const greeter = serveGreeterFirst(sheet, joint, moment);
+    if (greeter) return greeter;
+  }
   // CACHE LAW (bug fixed live in lane 66-e): a moment WITH a vector caches by its
   // bucketed region — identical-ish moments share slots and feed the freezing test.
   // A moment WITHOUT a vector caches by its exact state hash — never collapse two

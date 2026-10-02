@@ -25,7 +25,7 @@ import { factsClass, momentFacts } from './facts.js';
 //     map?: {input: output, ...}, default?: any,
 //     vector?: {dim, labels}, backend?: {...}, fallback?: {...},
 //     notes?: string }
-export function decompose(spec) {
+export function decompose(spec, { liftReports = null } = {}) {
   const receipts = [];
   const cells = [];
 
@@ -78,6 +78,43 @@ export function decompose(spec) {
       receipt.promote = 'freezes when the freezing test sees the same vector region → same output N times (see freezingTest)';
     }
 
+    // GREETER-LAW (wave-72): the wrong-joint tell as a SELECTION RULE
+    // (docs/greeter-law.md). A candidate region is GREETER-TERRITORY when
+    // (a) NO policy outcome depends on it — outcomes bind to FACTS (§5b-v2):
+    //     a factRequired/requiredFacts/outcome-bound behavior is FACT territory
+    //     and is never tagged — AND (b) the blind-judge lift of model-over-table
+    //     is ≤ 0 on its moments with ≥1 usable pair (greeterLiftTest, src/greeter.js;
+    //     the evidence rides in as liftReports[behavior.id]). Greeter-territory
+    //     cells route GREETER-FIRST (runJoint) and are EXEMPT from freezing
+    //     (they never freeze — the greeter is a relationship joint, not a lookup).
+    // Additive: no liftReports → no new keys anywhere (v1 output byte-identical).
+    const ev = liftReports && typeof liftReports === 'object' ? liftReports[b.id] : null;
+    if (ev && (b.kind === 'judgment' || b.kind === 'connection')) {
+      const outcomeFree = !b.factRequired && !((b.requiredFacts || []).length) && b.outcome === undefined;
+      const lift = Number(ev.lift);
+      const usablePairs = Number(ev.usablePairs) || 0;
+      const territory = outcomeFree && Number.isFinite(lift) && lift <= 0 && usablePairs >= 1;
+      cell.greeterTerritory = territory;
+      receipt.greeterTerritory = {
+        greeterTerritory: territory,
+        outcomeFree,
+        lift: Number.isFinite(lift) ? lift : null,
+        usablePairs,
+        reason: !outcomeFree
+          ? 'refused: a policy outcome depends on this region (facts decide outcomes — §5b-v2); this is FACT territory, the seat earns its keep where outcomes move'
+          : territory
+            ? 'tagged: outcome-free + no lift over the table (blind judge ≤ 0) — route greeter-first, never freeze'
+            : 'refused: lift evidence does not show no-lift (lift > 0 or zero usable pairs) — the seat is still open here',
+      };
+      if (territory) {
+        // routing hints pass through only on a tagged cell — decompose classifies,
+        // runJoint routes (greeter_route lookup consulted before the model seat).
+        if (b.greeter_route) cell.greeter_route = b.greeter_route;
+        if (b.greeter_miss) cell.greeter_miss = b.greeter_miss;
+        if (b.ask_back) cell.ask_back = b.ask_back;
+      }
+    }
+
     cells.push(cell);
     receipt.cell = { id: cell.id, kind: cell.kind, greeter: cell.greeter === true };
     receipts.push(receipt);
@@ -93,6 +130,10 @@ export function decompose(spec) {
         lookup: cells.filter(c => c.kind === 'lookup').length,
         softjoint: cells.filter(c => c.kind === 'softjoint' && !c.greeter).length,
         greeter: cells.filter(c => c.greeter).length,
+        // additive (wave-72): surfaced only when the greeter law tagged something
+        ...(cells.some(c => c.greeterTerritory !== undefined)
+          ? { greeterTerritory: cells.filter(c => c.greeterTerritory === true).length }
+          : {}),
       },
     },
   };
@@ -123,8 +164,8 @@ function bucketKey(vector, buckets) {
     .sort().join('|');
 }
 
-// freezingTest(observations, {threshold, buckets, requireFacts}) — the promotion instrument.
-// observations: [{vector: {label: value}, output, facts?: Fact[]}]
+// freezingTest(observations, {threshold, buckets, requireFacts, exemptRegions, detail}) — the promotion instrument.
+// observations: [{vector: {label: value}, output, facts?: Fact[], greeterTerritory?: true}]
 // When every observation in the largest region (bucketed vector + v2 facts class)
 // shares one output and count >= threshold, that region should freeze into a
 // lookup row.
@@ -135,8 +176,18 @@ function bucketKey(vector, buckets) {
 // outcome row keyed on an emotion-only region is a guess wearing a table's
 // clothes — the wave-67 diagnosis, codified. v1 callers (no requireFacts) keep
 // the exact v1 behavior.
-export function freezingTest(observations, { threshold = 3, buckets = 3, requireFacts = false, kinds = null } = {}) {
+//
+// GREETER-LAW exemption (wave-72): a region tagged greeter-territory NEVER
+// freezes — the greeter is a relationship joint, not a lookup. An observation
+// carries `greeterTerritory: true` (per the decompose() selection rule or the
+// host's own verdict), or the caller passes `exemptRegions: [region keys]`.
+// Exempt observations are bucketed and REPORTED (never silently dropped —
+// detail: true returns {proposals, greeterExempt}), but emit no freeze-proposal:
+// auto-frozen warmth would be a script wearing evidence's clothes.
+export function freezingTest(observations, { threshold = 3, buckets = 3, requireFacts = false, kinds = null, exemptRegions = null, detail = false } = {}) {
+  const exempt = Array.isArray(exemptRegions) ? new Set(exemptRegions) : null;
   const regions = new Map();
+  const greeterExempt = new Map();
   for (const o of observations || []) {
     // v1 callers (requireFacts=false) get the byte-identical v1 key: emotion
     // buckets only, facts invisible. v2 keys append the discrete facts class
@@ -151,10 +202,21 @@ export function freezingTest(observations, { threshold = 3, buckets = 3, require
     const r = regions.get(key);
     r.n += 1;
     r.factStarved = r.factStarved || starved;
+    // GREETER-LAW exemption: the region never freezes. Flagged observations and
+    // exemptRegions keys both mark it; the exemption is reported, not silent.
+    // `flagged` counts observation-FLAGS; exemptRegions marks the region itself.
+    if (o.greeterTerritory === true) {
+      const prev = greeterExempt.get(key);
+      greeterExempt.set(key, { flagged: (prev?.flagged || 0) + 1, byObservationFlag: true, byExemptRegions: !!prev?.byExemptRegions });
+    } else if (exempt && exempt.has(key)) {
+      const prev = greeterExempt.get(key);
+      greeterExempt.set(key, { flagged: prev?.flagged || 0, byObservationFlag: !!prev?.byObservationFlag, byExemptRegions: true });
+    }
     r.outputs.set(o.output, (r.outputs.get(o.output) || 0) + 1);
   }
   const proposals = [];
   for (const r of regions.values()) {
+    if (greeterExempt.has(r.region)) continue; // the greeter law: warmth never auto-freezes
     if (requireFacts && r.factStarved) continue; // the outcome law: no facts, no frozen outcome
     let best = null, bestN = 0;
     for (const [out, n] of r.outputs) if (n > bestN) { best = out; bestN = n; }
@@ -169,6 +231,18 @@ export function freezingTest(observations, { threshold = 3, buckets = 3, require
       if (requireFacts) p.factBearing = true;
       proposals.push(p);
     }
+  }
+  // v1/v2 shape is a bare array (byte-identical callers); detail: true opts into
+  // the greeter-exemption report — the exemption is visible, never silent.
+  if (detail) {
+    const greeterExemptReport = [...greeterExempt.entries()].map(([region, f]) => ({
+      region,
+      n: regions.get(region)?.n ?? f.flagged,
+      flagged: f.flagged,
+      source: f.byObservationFlag ? 'observation-flag' : 'exemptRegions',
+      note: 'greeter-territory: exempt from freezing (relationship joint, not a lookup — docs/greeter-law.md)',
+    }));
+    return { proposals, greeterExempt: greeterExemptReport };
   }
   return proposals;
 }

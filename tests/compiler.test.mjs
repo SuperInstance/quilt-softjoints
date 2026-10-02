@@ -59,7 +59,7 @@ test('clusters are scoped per target cell', () => {
 });
 
 test('compiled lookup table carries provenance (compiled_from run@seq)', () => {
-  const adjustments = [adj('r1', 3, 'pattern P', 'x', 'y'), adj('r2', 7, 'pattern P', 'w', 'y')];
+  const adjustments = [adj('r1', 3, 'pattern detected in run output', 'x', 'y'), adj('r2', 7, 'pattern detected again in run', 'w', 'y')];
   const { compiledCells } = compileAdjustments(sheet, adjustments);
   assert.deepEqual(compiledCells[0].compiled_from, ['r1@3', 'r2@7']);
 });

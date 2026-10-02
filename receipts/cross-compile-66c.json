@@ -1,0 +1,33 @@
+{
+  "at_utc": "2026-10-02T05:47:03.832Z",
+  "consumed": 5,
+  "compiled": [
+    {
+      "id": "auto-fragments-time-value-of-money-table-68c5d6",
+      "kind": "formula",
+      "inputs": [
+        "fragments.time-value-of-money-table"
+      ],
+      "expr": "guard(fragments.time-value-of-money-table)",
+      "guard_note": "emitted from 2 adjustments; hypothesis: hardcoded timing convention is the root cause — the cell must carry convention as an explicit parameter so one executable cell serves ordinary and due annuities",
+      "compiled_from": [
+        "dogfood-catalog-66c@31",
+        "dogfood-catalog-66c@45"
+      ]
+    }
+  ],
+  "receipts": [
+    {
+      "kind": "compile-receipt",
+      "at_utc": "2026-10-02T05:47:03.831Z",
+      "cluster": "hardcoded+timing+convention+cause+carry+explicit",
+      "adjustments_consumed": 2,
+      "pattern": "hardcoded timing convention is the root cause — the cell must carry convention as an explicit parameter so one executable cell serves ordinary and due annuities",
+      "new_cell": {
+        "id": "auto-fragments-time-value-of-money-table-68c5d6",
+        "kind": "formula"
+      },
+      "rationale": "2 generalizable adjustments kept hitting fragments.time-value-of-money-table for the same reason — the fix is a cell, not another manual pass"
+    }
+  ]
+}

@@ -10,8 +10,13 @@
 //   deepinfra-chat     — OpenAI-compatible cheap racing horses (granite-4.2-3b etc.)
 //   local              — deterministic stub for tests/smoke (no network)
 
+import { createHash } from 'node:crypto';
+
 const CACHE = new Map(); // key: type|model|bucketed-vector → {answer, vector, confidence}
 export function clearCache() { CACHE.clear(); }
+function rawHash(obj) {
+  return createHash('sha256').update(JSON.stringify(obj)).digest('hex').slice(0, 16);
+}
 
 export function makeBackend(desc, { fetchImpl = fetch, now = () => Date.now() } = {}) {
   const type = desc?.type || 'local';
@@ -126,7 +131,14 @@ export async function runJoint(sheet, jointId, moment, opts = {}) {
   if (!joint || joint.kind !== 'softjoint') throw new Error(`runJoint: ${jointId} is not a softjoint cell`);
   const backend = opts.backend || makeBackend(joint.backend, opts);
   const labels = joint.vector.labels || [];
-  const cacheKey = `${backend.type}|${backend.model}|${bucketVector(moment.vector || moment)}`;
+  // CACHE LAW (bug fixed live in lane 66-e): a moment WITH a vector caches by its
+  // bucketed region — identical-ish moments share slots and feed the freezing test.
+  // A moment WITHOUT a vector caches by its exact state hash — never collapse two
+  // different messages into one slot (the greeter's greeting once leaked into the
+  // refunder's answer because unvectorized moments all bucketed to the same key).
+  const cacheKey = moment.vector
+    ? `${backend.type}|${backend.model}|${bucketVector(moment.vector)}`
+    : `${backend.type}|${backend.model}|raw:${rawHash(moment.state ?? moment)}`;
   const budget = opts.budget ?? Infinity;
 
   if (CACHE.has(cacheKey) && opts.cache !== false) {

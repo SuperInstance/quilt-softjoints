@@ -14,28 +14,49 @@
 
 import { sha } from './store.js';
 
-// crude but honest keyword clustering: target cell + salient words of the hypothesis
-function clusterKey(adj) {
-  const words = String(adj?.why?.hypothesis || '')
+// v1 clustering (upgraded from single-key hashing after the lane 66-c cross-compile):
+// two adjustments belong to the same pattern when they target the same cell AND their
+// hypotheses share >= MIN_SHARED significant words. Union-find over that relation —
+// "hardcoded timing convention" and "hardcoded compounding frequency, same root-cause
+// class" now cluster (they share {hardcoded, convention, root?} but sorted-top-6 keys
+// previously diverged). Transparency note: shared-word overlap is still a heuristic;
+// it is receipted in each compile-receipt as the cluster's evidence.
+const STOP = new Set(['this','that','with','from','have','must','been','were','their','them','when','what','into','than','then','only','over','also','because','should','would','cell','cells','table','adjustment']);
+function sigWords(adj) {
+  return new Set(String(adj?.why?.hypothesis || '')
     .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
-    .filter(w => w.length > 3).sort().slice(0, 6);
-  return `${adj?.target?.cell_id || '?'}::${words.join('-')}`;
+    .filter(w => w.length > 4 && !STOP.has(w)));
+}
+function cluster(adjustments, { minShared = 2 } = {}) {
+  const parent = adjustments.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const union = (a, b) => { parent[find(a)] = find(b); };
+  const words = adjustments.map(sigWords);
+  for (let i = 0; i < adjustments.length; i++) {
+    for (let j = i + 1; j < adjustments.length; j++) {
+      if (adjustments[i]?.target?.cell_id !== adjustments[j]?.target?.cell_id) continue;
+      let shared = 0;
+      for (const w of words[i]) if (words[j].has(w)) shared += 1;
+      if (shared >= minShared) union(i, j);
+    }
+  }
+  const groups = new Map();
+  adjustments.forEach((a, i) => {
+    const k = find(i);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(a);
+  });
+  return [...groups.values()];
 }
 
 export function compileAdjustments(sheet, adjustments, { threshold = 2 } = {}) {
-  const clusters = new Map();
-  for (const adj of adjustments) {
-    if (adj?.kind !== 'adjustment') continue;
-    if (adj?.generalizes !== true) continue;
-    const key = clusterKey(adj);
-    if (!clusters.has(key)) clusters.set(key, []);
-    clusters.get(key).push(adj);
-  }
+  const candidates = adjustments.filter(a => a?.kind === 'adjustment' && a?.generalizes === true);
+  const groups = cluster(candidates);
 
   const receipts = [];
   const compiledCells = [];
 
-  for (const [key, group] of clusters) {
+  for (const group of groups) {
     if (group.length < threshold) continue;
     const first = group[0];
     const cellId = `auto-${(first.target?.cell_id || 'cell').replace(/[^a-z0-9-]/gi, '-')}-${sha(group).slice(0, 6)}`;
@@ -68,7 +89,7 @@ export function compileAdjustments(sheet, adjustments, { threshold = 2 } = {}) {
     receipts.push({
       kind: 'compile-receipt',
       at_utc: new Date().toISOString(),
-      cluster: key,
+      cluster: [...sigWords(first)].slice(0, 6).join('+') || '(no hypothesis words)',
       adjustments_consumed: group.length,
       pattern: first.why?.hypothesis,
       new_cell: { id: cellId, kind },

@@ -1,0 +1,6 @@
+node_modules/
+.env*
+!.env.example
+receipts/raw/
+*.local.*
+.DS_Store

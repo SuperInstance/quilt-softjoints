@@ -1,0 +1,35 @@
+{
+  "id": "corner-store-assistant",
+  "domain": "general store digital assistant (the principal's own example: automate the formulaic, keep the greeters human)",
+  "cells": [
+    { "id": "hours", "kind": "lookup", "inputs": [], "table": { "mon-fri": "7am-9pm", "sat": "8am-10pm", "sun": "9am-6pm" }, "default": "call us" },
+    { "id": "stock", "kind": "lookup", "inputs": [], "table": { "milk": "in stock (12)", "bread": "in stock (7)", "eggs": "low (2)", "socks": "in stock (30)" }, "default": "not carried" },
+    { "id": "refund-policy", "kind": "lookup", "inputs": [], "table": { "within-7-days-receipt": "full refund", "within-7-days-no-receipt": "store credit", "after-7-days": "manager review" }, "default": "manager review" },
+    { "id": "prices", "kind": "lookup", "inputs": [], "table": { "milk": 3.5, "bread": 2.25, "eggs": 4.0, "socks": 6.0 }, "default": null },
+    {
+      "id": "moment-read", "kind": "softjoint", "greeter": false,
+      "inputs": [],
+      "vector": { "dim": 4, "labels": ["urgency", "familiarity", "sentiment", "formality"] },
+      "backend": { "type": "typesafe-systemone", "model": "jev-latest" },
+      "fallback": { "type": "default", "note": "midpoint vector when the read fails" },
+      "notes": "reads the moment as a vector so downstream cells reason over SHAPE, not a single value"
+    },
+    {
+      "id": "refunder", "kind": "softjoint", "greeter": false,
+      "inputs": ["refund-policy"],
+      "vector": { "dim": 3, "labels": ["distress", "goodwill", "repeat-customer"] },
+      "backend": { "type": "deepinfra-chat", "model": "gpt-oss-20b" },
+      "fallback": { "type": "lookup", "ref": "refund-policy", "note": "degrade to the plain policy table" },
+      "notes": "policy is a table; APPLYING it to a distressed human is judgment — the soft joint between them"
+    },
+    {
+      "id": "greeter", "kind": "softjoint", "greeter": true,
+      "inputs": [],
+      "vector": { "dim": 4, "labels": ["warmth", "familiarity", "mood", "openness"] },
+      "backend": { "type": "deepinfra-chat", "model": "gpt-oss-20b" },
+      "fallback": null,
+      "notes": "THE GREETER: deliberately never decomposed. In the automated general store the greeter stays because human connection is relationship value that makes everything less robotic. Scripting this surface is the failure mode the thesis exists to prevent."
+    }
+  ],
+  "meta": { "decomposed_at": "2026-10-02T00:00:00Z", "counts": { "lookup": 4, "softjoint": 2, "greeter": 1 } }
+}

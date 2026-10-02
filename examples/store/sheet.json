@@ -1,0 +1,200 @@
+{
+  "sheet": "corner-store",
+  "version": 1,
+  "created_utc": "2026-10-02T04:12:26.408Z",
+  "description": "A small digital assistant for Ma's Corner Store: greeting, hours, stock, refunds, recommendations, chit-chat. The demo quilt for quilt-softjoints — decomposition splits its behavior into lookups (formulaic), softjoints (small models reading the moment as a vector), and greeters (deliberately never decomposed).",
+  "cells": [
+    {
+      "kind": "softjoint",
+      "id": "greet.greeter",
+      "inputs": [
+        "customer_text"
+      ],
+      "vector": {
+        "dim": 4,
+        "labels": [
+          "urgency",
+          "familiarity",
+          "sentiment",
+          "formality"
+        ]
+      },
+      "backend": {
+        "type": "deepinfra-chat",
+        "model": "ibm-granite/granite-4.2-3b",
+        "prompt_template": "You are the greeter of Ma's Corner Store, a small neighborhood shop. A customer walks in. Customer name on file: {{customer_name}}. They say: \"{{customer_text}}\". Greet them in one short, warm sentence. Do not upsell. Sound like a person, not a policy."
+      },
+      "fallback": {
+        "type": "default",
+        "ref": null,
+        "note": "even the greeter degrades gracefully: a fixed warm line when every channel is dark",
+        "value": "Welcome in! Baskets are by the door — I'm around if you need anything."
+      },
+      "greeter": true,
+      "notes": "GREETER (deliberately NEVER decomposed): GREETER: the welcome IS the product. The principal's line: in a fully automated general store you'd still have humans as greeters — part of the checkout process is the human connection. No table can hold warmth; decomposing this cell would delete the feature it exists for."
+    },
+    {
+      "kind": "softjoint",
+      "id": "chitchat.greeter",
+      "inputs": [
+        "customer_text"
+      ],
+      "vector": {
+        "dim": 4,
+        "labels": [
+          "urgency",
+          "familiarity",
+          "sentiment",
+          "formality"
+        ]
+      },
+      "backend": {
+        "type": "deepinfra-chat",
+        "model": "ibm-granite/granite-4.2-3b",
+        "prompt_template": "You are the owner of Ma's Corner Store, chatting with a neighbor at the counter. Name on file: {{customer_name}}. They say: \"{{customer_text}}\". Reply in one warm, short sentence like you've known them for years."
+      },
+      "fallback": {
+        "type": "default",
+        "ref": null,
+        "note": "graceful degradation: a friendly deflection when the model channel is dark",
+        "value": "Ha — tell me more over by the coffee shelf, it's fresh today."
+      },
+      "greeter": true,
+      "notes": "GREETER (deliberately NEVER decomposed): GREETER: chit-chat is connection maintenance, not an information lookup. Its value is that a human chose to talk; routing it through a table would end the conversation. Deliberately never decomposed."
+    },
+    {
+      "kind": "lookup",
+      "id": "hours.lookup",
+      "table": {
+        "monday": "7am-9pm",
+        "tuesday": "7am-9pm",
+        "wednesday": "7am-9pm",
+        "thursday": "7am-9pm",
+        "friday": "7am-10pm",
+        "saturday": "9am-5pm",
+        "sunday": "10am-4pm"
+      },
+      "default": "Hours vary on holidays — call us at 555-0134.",
+      "notes": "a closed day-of-week mapping: pure table, no model, no vector"
+    },
+    {
+      "kind": "lookup",
+      "id": "stock.lookup",
+      "table": {
+        "milk": "whole and 2%, back cooler, left side",
+        "bread": "day-old half price after 2pm",
+        "coffee": "fresh ground, beans or drip",
+        "eggs": "large, dozen, back cooler",
+        "ice_cream": "freezer by the register, 6 flavors"
+      },
+      "default": "Let me walk back and check for you.",
+      "notes": "a closed item->aisle mapping: pure table"
+    },
+    {
+      "kind": "softjoint",
+      "id": "refund.softjoint",
+      "inputs": [
+        "customer_text",
+        "customer_name"
+      ],
+      "vector": {
+        "dim": 4,
+        "labels": [
+          "urgency",
+          "familiarity",
+          "sentiment",
+          "formality"
+        ]
+      },
+      "backend": {
+        "type": "typesafe-systemone",
+        "model": "jev-latest",
+        "prompt_template": "You handle refunds at Ma's Corner Store. The customer says: \"{{customer_text}}\". Name on file: {{customer_name}}. Base policy (may be overridden by judgment): {{refund.base}}. Pick exactly ONE action for this moment.",
+        "criteria": {
+          "refund to card": "money back to the original payment",
+          "store credit": "credit for a future purchase — the default goodwill move",
+          "partial credit": "split the difference",
+          "deny politely": "outside policy, decline kindly",
+          "escalate to human": "beyond your authority"
+        }
+      },
+      "fallback": {
+        "type": "lookup",
+        "ref": "refund.base",
+        "note": "graceful degradation when the model call fails or the budget is out: the bucket rows are cooled-out answers, the default is plain policy"
+      },
+      "greeter": false,
+      "notes": "stays dynamic: intent declares 3 corner case(s) that need judgment over the moment, not a fixed row of a table (spec classify hint agrees)"
+    },
+    {
+      "kind": "lookup",
+      "id": "refund.base",
+      "table": {
+        "urgency:hi,familiarity:lo,sentiment:lo,formality:mid": "Deep breath — I've got you. Store credit in two minutes, no forms."
+      },
+      "default": "Store policy: 30 days with a receipt, store credit without. Let me make this right for you.",
+      "notes": "graceful degradation when the model call fails or the budget is out: the bucket rows are cooled-out answers, the default is plain policy"
+    },
+    {
+      "kind": "softjoint",
+      "id": "recommend.softjoint",
+      "inputs": [
+        "customer_text",
+        "customer_name"
+      ],
+      "vector": {
+        "dim": 4,
+        "labels": [
+          "urgency",
+          "familiarity",
+          "sentiment",
+          "formality"
+        ]
+      },
+      "backend": {
+        "type": "deepinfra-chat",
+        "model": "ibm-granite/granite-4.2-3b",
+        "prompt_template": "You recommend one item at Ma's Corner Store. Customer says: \"{{customer_text}}\". Name on file: {{customer_name}}. Stock hints: {{stock.lookup}}. Recommend exactly one item in one short sentence, off the mood of the moment."
+      },
+      "fallback": {
+        "type": "lookup",
+        "ref": "recommend.base",
+        "note": "graceful degradation when the model call fails or the budget is out"
+      },
+      "greeter": false,
+      "notes": "stays dynamic: policies are worded as judgment calls (\"always offer... when...\") — a lookup cannot rank them against the moment (spec classify hint agrees)"
+    },
+    {
+      "kind": "lookup",
+      "id": "recommend.base",
+      "table": {
+        "urgency:lo,familiarity:hi,sentiment:hi,formality:lo": "Day-old doughnuts are half price — you know you want them."
+      },
+      "default": "Can't go wrong with the day-old doughnuts — half price after 2pm.",
+      "notes": "graceful degradation when the model call fails or the budget is out"
+    }
+  ],
+  "compiled_cells": [
+    {
+      "kind": "lookup",
+      "id": "compiled.hours.lookup.hours-saturday",
+      "table": {
+        "saturday": "9am-6pm"
+      },
+      "default": null,
+      "notes": "compiled from 2 adjustments: would have prevented them",
+      "shadow_of": "hours.lookup"
+    }
+  ],
+  "annotations": {
+    "hours.lookup": [
+      {
+        "ts_utc": "2026-10-02T04:12:26.417Z",
+        "type": "compiled-correction",
+        "compiled_cell_id": "compiled.hours.lookup.hours-saturday",
+        "pattern": "hours-saturday-sign",
+        "n_adjustments": 2
+      }
+    ]
+  }
+}

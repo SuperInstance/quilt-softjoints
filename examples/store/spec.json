@@ -1,0 +1,84 @@
+{
+  "domain": "corner-store",
+  "description": "A small digital assistant for Ma's Corner Store: greeting, hours, stock, refunds, recommendations, chit-chat. The demo quilt for quilt-softjoints — decomposition splits its behavior into lookups (formulaic), softjoints (small models reading the moment as a vector), and greeters (deliberately never decomposed).",
+  "vector": { "dim": 4, "labels": ["urgency", "familiarity", "sentiment", "formality"] },
+  "default_backend": { "type": "typesafe-systemone", "model": "jev-latest" },
+  "intents": [
+    {
+      "id": "greet",
+      "human_connection": true,
+      "notes": "GREETER: the welcome IS the product. The principal's line: in a fully automated general store you'd still have humans as greeters — part of the checkout process is the human connection. No table can hold warmth; decomposing this cell would delete the feature it exists for.",
+      "backend": { "type": "deepinfra-chat", "model": "ibm-granite/granite-4.2-3b", "prompt_template": "You are the greeter of Ma's Corner Store, a small neighborhood shop. A customer walks in. Customer name on file: {{customer_name}}. They say: \"{{customer_text}}\". Greet them in one short, warm sentence. Do not upsell. Sound like a person, not a policy." },
+      "fallback": { "value": "Welcome in! Baskets are by the door — I'm around if you need anything.", "note": "even the greeter degrades gracefully: a fixed warm line when every channel is dark" },
+      "examples": ["hi", "hello there", "morning!"]
+    },
+    {
+      "id": "chitchat",
+      "human_connection": true,
+      "notes": "GREETER: chit-chat is connection maintenance, not an information lookup. Its value is that a human chose to talk; routing it through a table would end the conversation. Deliberately never decomposed.",
+      "backend": { "type": "deepinfra-chat", "model": "ibm-granite/granite-4.2-3b", "prompt_template": "You are the owner of Ma's Corner Store, chatting with a neighbor at the counter. Name on file: {{customer_name}}. They say: \"{{customer_text}}\". Reply in one warm, short sentence like you've known them for years." },
+      "fallback": { "value": "Ha — tell me more over by the coffee shelf, it's fresh today.", "note": "graceful degradation: a friendly deflection when the model channel is dark" },
+      "examples": ["nice weather today", "catch the game last night?"]
+    },
+    {
+      "id": "hours",
+      "classify": "lookup",
+      "enum": {
+        "monday": "7am-9pm", "tuesday": "7am-9pm", "wednesday": "7am-9pm", "thursday": "7am-9pm",
+        "friday": "7am-10pm", "saturday": "9am-5pm", "sunday": "10am-4pm"
+      },
+      "default": "Hours vary on holidays — call us at 555-0134.",
+      "notes": "a closed day-of-week mapping: pure table, no model, no vector",
+      "examples": ["when do you close on friday?"]
+    },
+    {
+      "id": "stock",
+      "classify": "lookup",
+      "enum": {
+        "milk": "whole and 2%, back cooler, left side",
+        "bread": "day-old half price after 2pm",
+        "coffee": "fresh ground, beans or drip",
+        "eggs": "large, dozen, back cooler",
+        "ice_cream": "freezer by the register, 6 flavors"
+      },
+      "default": "Let me walk back and check for you.",
+      "notes": "a closed item->aisle mapping: pure table",
+      "examples": ["where's the milk?"]
+    },
+    {
+      "id": "refund",
+      "classify": "softjoint",
+      "inputs": ["customer_text", "customer_name"],
+      "corner_cases": [
+        "receipt older than 30 days — store credit vs refund is a judgment call",
+        "no receipt but the customer is a regular — goodwill vs policy",
+        "product clearly defective and customer upset — de-escalate first, policy second"
+      ],
+      "policies": ["always de-escalate before quoting policy", "store credit is the default goodwill move"],
+      "backend": { "type": "typesafe-systemone", "model": "jev-latest", "prompt_template": "You handle refunds at Ma's Corner Store. The customer says: \"{{customer_text}}\". Name on file: {{customer_name}}. Base policy (may be overridden by judgment): {{refund.base}}. Pick exactly ONE action for this moment.", "criteria": { "refund to card": "money back to the original payment", "store credit": "credit for a future purchase — the default goodwill move", "partial credit": "split the difference", "deny politely": "outside policy, decline kindly", "escalate to human": "beyond your authority" } },
+      "fallback": {
+        "id": "refund.base",
+        "enum": {
+          "urgency:hi,familiarity:lo,sentiment:lo,formality:mid": "Deep breath — I've got you. Store credit in two minutes, no forms."
+        },
+        "default": "Store policy: 30 days with a receipt, store credit without. Let me make this right for you.",
+        "note": "graceful degradation when the model call fails or the budget is out: the bucket rows are cooled-out answers, the default is plain policy"
+      }
+    },
+    {
+      "id": "recommend",
+      "classify": "softjoint",
+      "inputs": ["customer_text", "customer_name"],
+      "policies": ["recommend off the moment (mood, weather, what they hold), not a fixed list", "never recommend what stock.lookup says is out"],
+      "backend": { "type": "deepinfra-chat", "model": "ibm-granite/granite-4.2-3b", "prompt_template": "You recommend one item at Ma's Corner Store. Customer says: \"{{customer_text}}\". Name on file: {{customer_name}}. Stock hints: {{stock.lookup}}. Recommend exactly one item in one short sentence, off the mood of the moment." },
+      "fallback": {
+        "id": "recommend.base",
+        "enum": {
+          "urgency:lo,familiarity:hi,sentiment:hi,formality:lo": "Day-old doughnuts are half price — you know you want them."
+        },
+        "default": "Can't go wrong with the day-old doughnuts — half price after 2pm.",
+        "note": "graceful degradation when the model call fails or the budget is out"
+      }
+    }
+  ]
+}
